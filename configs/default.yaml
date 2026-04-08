@@ -1,0 +1,19 @@
+project_name: CRIS
+data:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  artifacts_dir: artifacts
+  vector_store_dir: data/vector_store
+runtime:
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  spacy_model: en_core_web_sm
+  target_years:
+    - 2020
+    - 2021
+    - 2022
+retrieval:
+  table_top_k: 5
+  prose_top_k: 4
+features:
+  target_feature: ipc_crime_rate

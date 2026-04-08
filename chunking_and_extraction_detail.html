@@ -1,0 +1,114 @@
+
+<style>
+* { box-sizing: border-box; }
+.section-label { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); letter-spacing: 0.05em; margin-bottom: 8px; margin-top: 14px; }
+.problem-card { border-radius: var(--border-radius-md); padding: 10px 14px; margin-bottom: 10px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-background-primary); }
+.prob-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+.prob-desc { font-size: 12px; color: var(--color-text-secondary); line-height: 1.6; margin-bottom: 8px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.col-box { border-radius: var(--border-radius-md); padding: 8px 10px; }
+.col-label { font-size: 10px; font-weight: 500; margin-bottom: 4px; }
+.col-text { font-size: 11px; line-height: 1.6; font-family: var(--font-mono); color: var(--color-text-secondary); }
+.col-text.prose { font-family: var(--font-sans); }
+.strategy-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.strategy-box { flex: 1; min-width: 150px; border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-tertiary); padding: 9px 12px; background: var(--color-background-primary); }
+.s-title { font-size: 12px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 3px; }
+.s-desc { font-size: 11px; color: var(--color-text-secondary); line-height: 1.5; }
+.tag { font-size: 10px; padding: 2px 7px; border-radius: 20px; display: inline-block; margin-top: 4px; }
+.divider { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 12px 0; }
+.fallback-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.fb-box { border-radius: var(--border-radius-md); padding: 8px 10px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-background-secondary); }
+.fb-label { font-size: 10px; font-weight: 500; color: var(--color-text-tertiary); margin-bottom: 3px; }
+.fb-text { font-size: 11px; color: var(--color-text-secondary); line-height: 1.5; }
+</style>
+
+<h2 class="sr-only">Chunking strategy and feature extraction detail for NCRB RAG pipeline</h2>
+
+<div class="section-label">THE CORE CHALLENGE — WHY NAIVE CHUNKING FAILS ON NCRB</div>
+
+<div class="problem-card">
+  <div class="prob-title">Problem 1: Tables split across PDF pages lose row context</div>
+  <div class="prob-desc">Table 1A.4 spans multiple pages. A naive 512-token splitter will cut mid-table, creating chunks where "Rajasthan ... 312.4" appears without the column header "IPC crime rate per lakh". The retriever finds the number but not what it means.</div>
+  <div class="two-col">
+    <div class="col-box" style="background:var(--color-background-danger);">
+      <div class="col-label" style="color:var(--color-text-danger);">WRONG — naive chunk</div>
+      <div class="col-text">"...Bihar 287.3\nRajasthan 312.4\nUP 198.6\nWB 201.1..."</div>
+    </div>
+    <div class="col-box" style="background:var(--color-background-success);">
+      <div class="col-label" style="color:var(--color-text-success);">RIGHT — row-aware chunk</div>
+      <div class="col-text">"Table 1A.1 | State: Rajasthan | Metric: IPC crime rate per lakh population | Year: 2022 | Value: 312.4"</div>
+    </div>
+  </div>
+</div>
+
+<div class="problem-card">
+  <div class="prob-title">Problem 2: Multi-column tables need column header injection</div>
+  <div class="prob-desc">NCRB tables have 8–12 columns. pdfplumber extracts them spatially — but if you chunk a row without its headers, the LLM cannot map column position to metric name. Solution: prepend column headers to every row chunk during ingestion.</div>
+  <div class="two-col">
+    <div class="col-box" style="background:var(--color-background-danger);">
+      <div class="col-label" style="color:var(--color-text-danger);">RAG retrieves this</div>
+      <div class="col-text">"Kerala | 96.0 | 87.2 | 41.3 | 12.8 | ..."</div>
+    </div>
+    <div class="col-box" style="background:var(--color-background-success);">
+      <div class="col-label" style="color:var(--color-text-success);">Should retrieve this</div>
+      <div class="col-text">"State: Kerala | Charge-sheeting rate: 96.0% | Court disposal rate: 87.2% | Conviction rate: 41.3% | Acquittal rate: 12.8%"</div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+<div class="section-label">CHUNKING STRATEGY — TWO SEPARATE INDEXES</div>
+
+<div class="strategy-row">
+  <div class="strategy-box">
+    <div class="s-title">Index A — Structured table index</div>
+    <div class="s-desc">Each row of each table becomes one document. Metadata: table_id, state, year, metric_names, values. Queried with exact filters — "retrieve all rows where state=Kerala". Fast, precise numeric lookup.</div>
+    <span class="tag" style="background:#E1F5EE;color:#085041;">For feature extraction</span>
+  </div>
+  <div class="strategy-box">
+    <div class="s-title">Index B — Prose + snapshot index</div>
+    <div class="s-desc">Snapshot text, chapter summaries, methodology sections chunked at sentence level with 50-token overlap. Semantic search. Used for explanatory QA — "why did cyber crime rise?"</div>
+    <span class="tag" style="background:#EEEDFE;color:#3C3489;">For user QA</span>
+  </div>
+  <div class="strategy-box">
+    <div class="s-title">Query router</div>
+    <div class="s-desc">Classify each query as "numeric lookup" (→ Index A, exact retrieval) or "explanatory" (→ Index B, semantic search). A simple intent classifier or keyword check handles this.</div>
+    <span class="tag" style="background:#FAEEDA;color:#633806;">Routing logic</span>
+  </div>
+</div>
+
+<div class="divider"></div>
+<div class="section-label">FEATURE EXTRACTION — HOW TO MAKE IT RELIABLE</div>
+
+<div class="problem-card">
+  <div class="prob-title">Extraction pipeline per state per feature (Step 06 detail)</div>
+  <div class="prob-desc">Do not rely on the LLM to extract numbers from free text — LLMs hallucinate numeric values. Instead, use a two-stage approach: RAG retrieves the correct chunk, then a deterministic regex extracts the number from that chunk. The LLM is only used for routing and answer generation, never for number production.</div>
+  <div class="two-col">
+    <div class="col-box" style="background:var(--color-background-secondary);">
+      <div class="col-label" style="color:var(--color-text-secondary);">STAGE 1 — RAG retrieves</div>
+      <div class="col-text prose">Query: "Charge-sheeting rate for Kerala, Table 19A, 2022"<br><br>Retrieved chunk: "State: Kerala | Charge-sheeting rate: 96.0% | Table: 19A | Year: 2022"</div>
+    </div>
+    <div class="col-box" style="background:var(--color-background-secondary);">
+      <div class="col-label" style="color:var(--color-text-secondary);">STAGE 2 — Regex extracts</div>
+      <div class="col-text">pattern = r"Charge-sheeting rate:\s*([\d.]+)%"<br><br>match → 96.0<br>type → float<br>unit → percent<br>valid range → [0, 100] ✓</div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+<div class="section-label">HANDLING MISSING / FAILED EXTRACTIONS</div>
+
+<div class="fallback-row">
+  <div class="fb-box">
+    <div class="fb-label">Tier 1 — RAG + regex</div>
+    <div class="fb-text">Primary path. Succeeds for well-structured table rows with clean pdfplumber extraction.</div>
+  </div>
+  <div class="fb-box">
+    <div class="fb-label">Tier 2 — Direct table parse</div>
+    <div class="fb-text">If RAG fails, fall back to direct pdfplumber table extraction for known page ranges. No vector search.</div>
+  </div>
+  <div class="fb-box">
+    <div class="fb-label">Tier 3 — Imputation</div>
+    <div class="fb-text">If both fail (e.g. Nagaland data gap flagged in report), impute with regional median or flag as missing in feature matrix.</div>
+  </div>
+</div>

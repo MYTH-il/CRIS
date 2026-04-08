@@ -1,0 +1,185 @@
+
+<style>
+* { box-sizing: border-box; }
+.phase { border-radius: var(--border-radius-lg); border: 0.5px solid var(--color-border-tertiary); margin-bottom: 14px; overflow: hidden; }
+.phase-header { padding: 10px 14px; font-size: 12px; font-weight: 500; letter-spacing: 0.04em; }
+.phase-body { padding: 12px 14px; }
+.step-row { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; flex-wrap: wrap; }
+.step { border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-tertiary); padding: 9px 12px; flex: 1; min-width: 130px; background: var(--color-background-primary); }
+.step-num { font-size: 10px; color: var(--color-text-tertiary); margin-bottom: 3px; }
+.step-title { font-size: 12px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 3px; }
+.step-desc { font-size: 11px; color: var(--color-text-secondary); line-height: 1.5; }
+.arrow-down { text-align: center; font-size: 16px; color: var(--color-text-tertiary); margin: 2px 0; line-height: 1; }
+.arrow-right { font-size: 14px; color: var(--color-text-tertiary); align-self: center; flex-shrink: 0; }
+.tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 20px; margin-top: 4px; }
+.flow-label { font-size: 10px; color: var(--color-text-tertiary); text-align: center; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.04em; }
+.divider { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 10px 0; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin-top: 6px; }
+.feature-pill { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 6px 10px; font-size: 11px; color: var(--color-text-secondary); }
+.feature-pill span { display: block; font-size: 10px; color: var(--color-text-tertiary); margin-bottom: 1px; }
+.output-box { border-radius: var(--border-radius-md); padding: 10px 14px; margin-top: 8px; }
+</style>
+
+<h2 class="sr-only">System architecture: RAG feature extraction feeding XGBoost crime rate predictor</h2>
+
+<div class="flow-label">PHASE 1 — OFFLINE: BUILD KNOWLEDGE BASE</div>
+
+<div class="phase" style="background:var(--color-background-secondary);">
+  <div class="phase-header" style="background:#EEEDFE;color:#3C3489;">NLP pipeline — ingest & index NCRB PDF</div>
+  <div class="phase-body">
+    <div class="step-row">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-title">PDF parsing</div>
+        <div class="step-desc">Extract text + table structure using pdfplumber. Separate prose sections from tabular rows. Tag each chunk with chapter, table ID, and page number.</div>
+        <span class="tag" style="background:#EEEDFE;color:#534AB7;">pdfplumber</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-title">Chunking strategy</div>
+        <div class="step-desc">Use table-aware chunking — each row becomes a chunk tagged with state/city + metric type. Prose chunks are sentence-split with 50-token overlap.</div>
+        <span class="tag" style="background:#EEEDFE;color:#534AB7;">LangChain splitter</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-title">Embedding</div>
+        <div class="step-desc">Encode all chunks with a domain-appropriate model. Each chunk → dense vector stored with metadata (state, year, table, metric).</div>
+        <span class="tag" style="background:#EEEDFE;color:#534AB7;">sentence-transformers</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div class="step-title">Vector store</div>
+        <div class="step-desc">Store vectors + metadata in FAISS (local) or ChromaDB. Build a separate structured index for table rows to enable exact numeric lookup.</div>
+        <span class="tag" style="background:#EEEDFE;color:#534AB7;">FAISS / Chroma</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow-down">↓</div>
+<div class="flow-label">PHASE 2 — OFFLINE: EXTRACT & STRUCTURE FEATURES</div>
+
+<div class="phase">
+  <div class="phase-header" style="background:#E1F5EE;color:#085041;">Feature engineering via structured RAG queries</div>
+  <div class="phase-body">
+    <div class="step-row">
+      <div class="step">
+        <div class="step-num">05</div>
+        <div class="step-title">Template queries</div>
+        <div class="step-desc">For each of 36 states, run a fixed set of RAG queries: "What is {state}'s IPC crime rate?", "What is {state}'s conviction rate for murder?", etc. These are not user queries — they are automated extraction calls.</div>
+        <span class="tag" style="background:#E1F5EE;color:#0F6E56;">36 states × 12 features</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">06</div>
+        <div class="step-title">Number extraction NLP</div>
+        <div class="step-desc">Pass RAG response through a regex + NER layer to extract the numeric value. Handle units (per lakh, %, cases). Validate range — flag if value is implausible.</div>
+        <span class="tag" style="background:#E1F5EE;color:#0F6E56;">spaCy NER + regex</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">07</div>
+        <div class="step-title">Feature matrix</div>
+        <div class="step-desc">Assemble a 36 × 12 DataFrame — one row per state, one column per extracted feature. Missing values flagged for imputation. This is the ML training input.</div>
+        <span class="tag" style="background:#E1F5EE;color:#0F6E56;">pandas DataFrame</span>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="step-num" style="margin-bottom:6px;">FEATURES EXTRACTED PER STATE</div>
+    <div class="feature-grid">
+      <div class="feature-pill"><span>Source: Table 1A.1</span>IPC crime rate (per lakh)</div>
+      <div class="feature-pill"><span>Source: Table 17A</span>Police disposal rate (%)</div>
+      <div class="feature-pill"><span>Source: Table 18A</span>Court disposal rate (%)</div>
+      <div class="feature-pill"><span>Source: Table 19A</span>Charge-sheeting rate (%)</div>
+      <div class="feature-pill"><span>Source: Table 19A.6</span>IPC conviction rate (%)</div>
+      <div class="feature-pill"><span>Source: Table 19A.6</span>Acquittal rate (%)</div>
+      <div class="feature-pill"><span>Source: Table 2A.1</span>Murder rate (per lakh)</div>
+      <div class="feature-pill"><span>Source: Table 9A</span>Cyber crime rate (per lakh)</div>
+      <div class="feature-pill"><span>Source: Table 3A.1</span>Crime against women rate</div>
+      <div class="feature-pill"><span>Source: Table 8A</span>Economic offence rate</div>
+      <div class="feature-pill"><span>Source: Table 5A.1</span>Juvenile crime rate</div>
+      <div class="feature-pill"><span>Source: Table 1C.1</span>Violent crime rate</div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow-down">↓</div>
+<div class="flow-label">PHASE 3 — OFFLINE: TRAIN XGBOOST</div>
+
+<div class="phase">
+  <div class="phase-header" style="background:#FAEEDA;color:#633806;">ML training — XGBoost regressor</div>
+  <div class="phase-body">
+    <div class="step-row">
+      <div class="step">
+        <div class="step-num">08</div>
+        <div class="step-title">Target variable</div>
+        <div class="step-desc">Primary target: overall IPC crime rate per lakh population (Table 1A.1). Secondary target: % YoY change 2021→2022. Train separate models per target.</div>
+        <span class="tag" style="background:#FAEEDA;color:#854F0B;">regression target</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">09</div>
+        <div class="step-title">Train / val split</div>
+        <div class="step-desc">With only 36 states, use leave-one-out CV or 5-fold CV. Augment with 2020 and 2021 data from prior NCRB reports to get 108 rows (36 × 3 years) — enough for robust training.</div>
+        <span class="tag" style="background:#FAEEDA;color:#854F0B;">LOO-CV or k-fold</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">10</div>
+        <div class="step-title">XGBoost + SHAP</div>
+        <div class="step-desc">Train XGBoost regressor with hyperparameter tuning via GridSearchCV. Run SHAP to get feature importance — this becomes a key result: which judicial/crime features most predict overall crime rate.</div>
+        <span class="tag" style="background:#FAEEDA;color:#854F0B;">xgboost + shap</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow-down">↓</div>
+<div class="flow-label">PHASE 4 — ONLINE: INFERENCE PIPELINE</div>
+
+<div class="phase">
+  <div class="phase-header" style="background:#FAECE7;color:#712B13;">Live query → prediction</div>
+  <div class="phase-body">
+    <div class="step-row">
+      <div class="step">
+        <div class="step-num">11</div>
+        <div class="step-title">User query</div>
+        <div class="step-desc">"What will Rajasthan's crime rate trend look like given its current conviction rate?" Natural language input — no structured form required.</div>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">12</div>
+        <div class="step-title">RAG retrieval</div>
+        <div class="step-desc">Query hits the vector store, retrieves the top-k chunks for Rajasthan across relevant tables. LLM generates a grounded answer with citations.</div>
+        <span class="tag" style="background:#FAECE7;color:#993C1D;">NLP output</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">13</div>
+        <div class="step-title">Feature lookup</div>
+        <div class="step-desc">Identify the state from the query. Pull Rajasthan's feature row from the pre-built matrix. Feed into trained XGBoost model.</div>
+        <span class="tag" style="background:#FAECE7;color:#993C1D;">ML input</span>
+      </div>
+      <div class="arrow-right">→</div>
+      <div class="step">
+        <div class="step-num">14</div>
+        <div class="step-title">Combined output</div>
+        <div class="step-desc">Return RAG answer + predicted crime rate + SHAP explanation of which features drove the prediction. One unified response to the user's question.</div>
+        <span class="tag" style="background:#FAECE7;color:#993C1D;">unified response</span>
+      </div>
+    </div>
+
+    <div class="output-box" style="background:var(--color-background-info);">
+      <div style="font-size:11px;font-weight:500;color:var(--color-text-info);margin-bottom:4px;">SAMPLE SYSTEM OUTPUT</div>
+      <div style="font-size:12px;color:var(--color-text-info);line-height:1.7;">
+        <b>RAG answer:</b> "Rajasthan's IPC conviction rate in 2022 was 32.1% with a charge-sheeting rate of 74.3% [Table 19A]."<br>
+        <b>Predicted crime rate:</b> 312.4 per lakh (±18.2) — above national avg of 258.1<br>
+        <b>Top driver (SHAP):</b> Low conviction rate contributes +28.6 to predicted rate
+      </div>
+    </div>
+  </div>
+</div>
